@@ -103,6 +103,7 @@ class EmployeeService:
         # перечитываем, чтобы подтянуть relations (metrics, team_members, confirmation_requests)
         return await self.get(employee.id)
 
+
     async def list(
         self,
         *,

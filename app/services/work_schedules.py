@@ -70,6 +70,7 @@ class WorkScheduleService:
                 employee.work_format = payload.work_format
                 await self.session.flush()
 
+
         await self.session.commit()
         return schedule
 
