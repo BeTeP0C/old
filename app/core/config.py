@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     vk_user_info_url: str = "https://api.vk.com/method/users.get"
     vk_api_version: str = "5.199"
 
+    openrouter_api_key: str = ""
+    openrouter_model: str = "deepseek/deepseek-v4-flash"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    app_public_url: str = "http://localhost:8000"
+    embeddings_enabled: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

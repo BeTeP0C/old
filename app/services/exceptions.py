@@ -8,3 +8,7 @@ class NotFoundError(ServiceError):
 
 class InvalidOperationError(ServiceError):
     pass
+
+
+class AIServiceError(ServiceError):
+    pass

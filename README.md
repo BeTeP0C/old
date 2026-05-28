@@ -73,6 +73,54 @@ venv\Scripts\python.exe -m mypy app
 
 Some integration tests use PostgreSQL. If the database is unavailable, those tests skip where appropriate.
 
+## AI / RAG Module
+
+The AI module adds OpenRouter-backed explanations and RAG document lookup without changing the source of truth for analytics. The LLM does not calculate metrics: `employee_metrics` and the existing rule-based recommendations remain authoritative, and AI only explains the context it receives.
+
+Environment variables:
+
+- `OPENROUTER_API_KEY`: required only when AI endpoints call OpenRouter.
+- `OPENROUTER_MODEL`: defaults to `deepseek/deepseek-v4-flash`.
+- `OPENROUTER_BASE_URL`: defaults to `https://openrouter.ai/api/v1`.
+- `APP_PUBLIC_URL`: used for OpenRouter `HTTP-Referer`.
+- `EMBEDDINGS_ENABLED`: defaults to `false`; when disabled, RAG search uses text fallback over `ai_chunks.content`.
+
+AI endpoints:
+
+- `POST /api/v1/ai/chat`
+- `POST /api/v1/ai/employees/{employee_id}/explain`
+- `POST /api/v1/ai/documents`
+- `GET /api/v1/ai/documents/search?query=...&limit=5`
+
+Load a document into RAG:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/ai/documents `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <JWT>" `
+  -d '{
+    "title": "WorkTime Sync rules",
+    "source_type": "system_rules",
+    "source_name": "manual",
+    "content": "..."
+  }'
+```
+
+Ask AI with employee context and optional RAG:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/ai/chat `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer <JWT>" `
+  -d '{
+    "question": "Почему у сотрудника высокий риск?",
+    "employee_id": "EMPLOYEE_UUID",
+    "use_rag": true
+  }'
+```
+
+Responses are validated as structured JSON with `summary`, `answer`, `reasons`, `recommended_actions`, `missing_data`, and `used_context`.
+
 ## MVP Endpoints
 
 Auth:
@@ -116,6 +164,13 @@ Recommendations and dashboard:
 - `GET /api/v1/employees/{employee_id}/recommendations`
 - `GET /api/v1/teams/{team_id}/recommendations`
 - `GET /api/v1/dashboard/summary`
+
+AI:
+
+- `POST /api/v1/ai/chat`
+- `POST /api/v1/ai/employees/{employee_id}/explain`
+- `POST /api/v1/ai/documents`
+- `GET /api/v1/ai/documents/search`
 
 ## Auth Notes
 

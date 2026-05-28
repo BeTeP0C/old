@@ -1,6 +1,14 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import activity_events, auth, dashboard, employees, recommendations, teams
+from app.api.v1.endpoints import (
+    activity_events,
+    ai,
+    auth,
+    dashboard,
+    employees,
+    recommendations,
+    teams,
+)
 
 api_router = APIRouter()
 
@@ -12,6 +20,7 @@ async def api_health_check() -> dict[str, str]:
 
 api_router.include_router(employees.router)
 api_router.include_router(activity_events.router)
+api_router.include_router(ai.router)
 api_router.include_router(auth.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(recommendations.router)

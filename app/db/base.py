@@ -1,3 +1,3 @@
-from app.models.base import Base
+from app.models import Base
 
 __all__ = ("Base",)

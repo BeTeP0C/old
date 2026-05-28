@@ -1,10 +1,25 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import psycopg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.core.config import settings
 from app.main import app
+
+
+def _sync_database_url() -> str:
+    return settings.sqlalchemy_database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def require_database() -> None:
+    try:
+        with psycopg.connect(_sync_database_url(), connect_timeout=2) as connection:
+            connection.execute("select 1")
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"PostgreSQL is not available for activity event import tests: {exc}")
 
 
 @pytest.fixture
