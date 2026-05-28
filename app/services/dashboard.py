@@ -38,4 +38,8 @@ class DashboardService:
             vacations_this_month=await self.dashboard.count_vacations_in_range(
                 start_of_month, end_of_month
             ),
+            average_actuality_score=await self.dashboard.avg_actuality_score(),
+            average_risk_score=await self.dashboard.avg_risk_score(),
+            conflicts_rate=await self.dashboard.conflicts_rate(),
+            team_size=total_employees,
         )

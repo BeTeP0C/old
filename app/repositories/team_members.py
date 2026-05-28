@@ -28,6 +28,12 @@ class TeamMemberRepository:
         )
         return list(result.scalars().all())
 
+    async def list_team_ids_for_employee(self, employee_id: UUID) -> list[UUID]:
+        result = await self.session.execute(
+            select(TeamMember.team_id).where(TeamMember.employee_id == employee_id)
+        )
+        return list(result.scalars().all())
+
     async def count_for_team(self, team_id: UUID) -> int:
         result = await self.session.execute(
             select(func.count())

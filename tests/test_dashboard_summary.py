@@ -67,6 +67,10 @@ async def test_dashboard_summary_empty_database(client: AsyncClient) -> None:
         "last_calculation_at": None,
         "actual_schedules_count": 0,
         "vacations_this_month": 0,
+        "average_actuality_score": 0.0,
+        "average_risk_score": 0.0,
+        "conflicts_rate": 0.0,
+        "team_size": 0,
     }
 
 
@@ -128,7 +132,16 @@ async def test_dashboard_summary_non_empty_database(client: AsyncClient) -> None
     response = await client.get("/api/v1/dashboard/summary")
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    # Считаем агрегаты отдельно через approx — иначе мелкие IEEE-расхождения дробей
+    # ломают строгое сравнение.
+    average_actuality_score = payload.pop("average_actuality_score")
+    average_risk_score = payload.pop("average_risk_score")
+    conflicts_rate = payload.pop("conflicts_rate")
+    assert average_actuality_score == pytest.approx((0.94 + 0.0) / 2)
+    assert average_risk_score == pytest.approx((0.3 + 0.65) / 2)
+    assert conflicts_rate == pytest.approx((1 + 4) / (5 + 8))
+    assert payload == {
         "total_employees": 3,
         "total_teams": 2,
         "employees_by_risk_level": {
@@ -143,4 +156,5 @@ async def test_dashboard_summary_non_empty_database(client: AsyncClient) -> None
         "last_calculation_at": "2026-05-24T12:00:00Z",
         "actual_schedules_count": 2,
         "vacations_this_month": 0,
+        "team_size": 3,
     }

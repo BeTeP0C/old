@@ -1,4 +1,6 @@
 import hashlib
+import json
+from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 from uuid import UUID
 
@@ -58,6 +60,57 @@ class AIService:
         raw_response = await self.llm_client.chat_json(build_messages(prompt))
         return self._validate_ai_response(raw_response, AiChatResponse)
 
+    async def chat_stream(self, payload: AiChatRequest) -> AsyncIterator[dict[str, Any]]:
+        """Streams partial deltas of the model output, then a final validated event.
+
+        Event shape (each yielded dict represents one SSE-event):
+          {"event": "delta", "data": {"text": "..."}}        — raw text chunk
+          {"event": "done",  "data": {"response": {...}}}    — parsed AiChatResponse
+          {"event": "error", "data": {"detail": "..."}}      — error
+        """
+        context = await self._build_sql_context(payload)
+        rag_context = ""
+        if payload.use_rag:
+            rag_context, _chunks = await self.rag.build_rag_context(payload.question)
+        prompt = build_general_rag_chat_prompt(payload.question, context, rag_context)
+
+        buffer_parts: list[str] = []
+        try:
+            async for chunk in self.llm_client.chat_text_stream(build_messages(prompt)):
+                buffer_parts.append(chunk)
+                yield {"event": "delta", "data": {"text": chunk}}
+        except AIServiceError as exc:
+            yield {"event": "error", "data": {"detail": str(exc)}}
+            return
+
+        raw_text = "".join(buffer_parts).strip()
+        if not raw_text:
+            yield {"event": "error", "data": {"detail": "AI returned empty response"}}
+            return
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            yield {
+                "event": "error",
+                "data": {"detail": "AI response is not valid JSON"},
+            }
+            return
+        if not isinstance(parsed, dict):
+            yield {
+                "event": "error",
+                "data": {"detail": "AI response must be a JSON object"},
+            }
+            return
+        try:
+            validated = AiChatResponse.model_validate(parsed)
+        except ValidationError:
+            yield {
+                "event": "error",
+                "data": {"detail": "AI response does not match expected JSON schema"},
+            }
+            return
+        yield {"event": "done", "data": {"response": validated.model_dump(mode="json")}}
+
     async def explain_employee(
         self,
         employee_id: UUID,
@@ -115,7 +168,7 @@ class AIService:
 
     async def _build_sql_context(self, payload: AiChatRequest) -> dict[str, Any]:
         if not payload.employee_id and not payload.team_id:
-            return {"question_scope": "general"}
+            return await self.context.get_overview_context()
         context: dict[str, Any] = {}
         if payload.employee_id:
             context["employee_context"] = await self.context.get_employee_context(

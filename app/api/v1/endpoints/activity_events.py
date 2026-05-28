@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentEmployeeDep, get_db_session, require_roles
@@ -45,10 +45,20 @@ async def import_activity_events_csv(
             require_roles(EmployeeRole.ADMIN, EmployeeRole.HR, EmployeeRole.PM)
         ),
     ],
+    source: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Источник по умолчанию для строк без поля source: "
+                "calendar | hr | tracker | timesheet"
+            ),
+            max_length=60,
+        ),
+    ] = None,
 ) -> ActivityEventImportResult:
     content = (await file.read()).decode("utf-8-sig")
     try:
-        events = parse_csv_activity_events(content)
+        events = parse_csv_activity_events(content, default_source=source)
         return await ActivityEventService(session).import_events(events)
     except ActivityEventImportValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.errors) from exc
@@ -70,9 +80,19 @@ async def import_activity_events_json(
             require_roles(EmployeeRole.ADMIN, EmployeeRole.HR, EmployeeRole.PM)
         ),
     ],
+    source: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Источник по умолчанию для элементов без поля source: "
+                "calendar | hr | tracker | timesheet"
+            ),
+            max_length=60,
+        ),
+    ] = None,
 ) -> ActivityEventImportResult:
     try:
-        events = parse_json_activity_events(payload)
+        events = parse_json_activity_events(payload, default_source=source)
         return await ActivityEventService(session).import_events(events)
     except ActivityEventImportValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.errors) from exc

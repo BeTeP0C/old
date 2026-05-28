@@ -214,3 +214,110 @@ async def test_manual_event_create(client: AsyncClient) -> None:
     assert response.status_code == 201
     assert response.json()["is_recurring"] is False
     assert response.json()["is_outside_schedule"] is False
+
+
+@pytest.mark.asyncio
+async def test_csv_import_uses_source_query_param_when_column_missing(
+    client: AsyncClient,
+) -> None:
+    """Если CSV без колонки source, query-параметр заполняет её на всех строках."""
+    employee_id = await _create_employee(client)
+    start = datetime.now(UTC)
+    end = start + timedelta(hours=1)
+    external_id = uuid4().hex
+    csv_content = "\n".join(
+        [
+            "employee_id,external_id,event_type,title,start_dt,end_dt,timezone",
+            (
+                f"{employee_id},{external_id},meeting,Standup,"
+                f"{start.isoformat()},{end.isoformat()},Europe/Moscow"
+            ),
+        ]
+    )
+
+    response = await client.post(
+        "/api/v1/import/events/csv?source=calendar",
+        files={"file": ("events.csv", csv_content, "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["imported_count"] == 1
+
+    events_response = await client.get(f"/api/v1/employees/{employee_id}/events")
+    assert events_response.status_code == 200
+    imported = next(
+        event for event in events_response.json() if event["external_id"] == external_id
+    )
+    assert imported["source"] == "calendar"
+
+
+@pytest.mark.asyncio
+async def test_json_import_per_row_source_overrides_query_default(
+    client: AsyncClient,
+) -> None:
+    """Явный source у строки имеет приоритет над query-параметром."""
+    employee_id = await _create_employee(client)
+    start = datetime.now(UTC)
+    end = start + timedelta(minutes=45)
+    explicit_id = uuid4().hex
+    defaulted_id = uuid4().hex
+    payload = [
+        {
+            "employee_id": employee_id,
+            "external_id": explicit_id,
+            "source": "tracker",
+            "event_type": "task",
+            "title": "Explicit source",
+            "start_dt": start.isoformat(),
+            "end_dt": end.isoformat(),
+            "timezone": "Europe/Moscow",
+        },
+        {
+            "employee_id": employee_id,
+            "external_id": defaulted_id,
+            "event_type": "meeting",
+            "title": "No source field",
+            "start_dt": start.isoformat(),
+            "end_dt": end.isoformat(),
+            "timezone": "Europe/Moscow",
+        },
+    ]
+
+    response = await client.post(
+        "/api/v1/import/events/json?source=hr",
+        json=payload,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["imported_count"] == 2
+
+    events_response = await client.get(f"/api/v1/employees/{employee_id}/events")
+    events_by_external = {
+        event["external_id"]: event for event in events_response.json()
+    }
+    assert events_by_external[explicit_id]["source"] == "tracker"
+    assert events_by_external[defaulted_id]["source"] == "hr"
+
+
+@pytest.mark.asyncio
+async def test_csv_import_without_source_and_without_query_fails(
+    client: AsyncClient,
+) -> None:
+    """Если source не задан ни в колонке, ни в query — старая ошибка валидации."""
+    employee_id = await _create_employee(client)
+    start = datetime.now(UTC)
+    end = start + timedelta(hours=1)
+    csv_content = "\n".join(
+        [
+            "employee_id,event_type,title,start_dt,end_dt,timezone",
+            (
+                f"{employee_id},meeting,Standup,"
+                f"{start.isoformat()},{end.isoformat()},Europe/Moscow"
+            ),
+        ]
+    )
+
+    response = await client.post(
+        "/api/v1/import/events/csv",
+        files={"file": ("events.csv", csv_content, "text/csv")},
+    )
+    assert response.status_code == 400
+    assert "source" in response.text

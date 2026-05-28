@@ -1,7 +1,10 @@
+import json
+from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.service import AIService
@@ -41,6 +44,54 @@ async def chat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except AIServiceError as exc:
         raise _ai_http_exception(exc) from exc
+
+
+@router.post(
+    "/chat/stream",
+    responses={
+        **error_responses,
+        200: {
+            "description": "SSE stream of `delta`, `done` and `error` events",
+            "content": {"text/event-stream": {}},
+        },
+    },
+)
+async def chat_stream(
+    payload: AiChatRequest,
+    session: SessionDep,
+    _current_employee: CurrentEmployeeDep,
+) -> StreamingResponse:
+    """Server-Sent Events stream of incremental AI answer.
+
+    Event types:
+      * `delta` — `{"text": "chunk"}`, raw text chunks of model output as they arrive
+      * `done`  — `{"response": <AiChatResponse>}`, final validated structured answer
+      * `error` — `{"detail": "..."}`, terminal error (after this no more events)
+    """
+    # Build the async generator up-front so we can surface auth/lookup errors
+    # synchronously (404 for missing employee/team, 503/502 for AI failures)
+    # rather than burying them in the stream.
+    service = AIService(session)
+    try:
+        await service._build_sql_context(payload)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    async def event_source() -> AsyncIterator[bytes]:
+        try:
+            async for event in service.chat_stream(payload):
+                payload_str = json.dumps(event["data"], ensure_ascii=False)
+                chunk = f"event: {event['event']}\ndata: {payload_str}\n\n"
+                yield chunk.encode("utf-8")
+        except AIServiceError as exc:
+            payload_str = json.dumps({"detail": str(exc)}, ensure_ascii=False)
+            yield f"event: error\ndata: {payload_str}\n\n".encode("utf-8")
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post(

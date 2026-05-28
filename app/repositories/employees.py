@@ -154,6 +154,8 @@ def _apply_filters(
     return stmt
 
 
+
+
 def _apply_category_filter(stmt, category: str, *, now: datetime | None):
     """Категории сотрудников из ТЗ §4.
 

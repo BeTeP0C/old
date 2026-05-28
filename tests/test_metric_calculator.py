@@ -105,14 +105,16 @@ def _insert_event(
     timezone: str,
     source: str,
     is_outside_schedule: bool = False,
+    recurrence_rule: str | None = None,
 ) -> None:
     connection.execute(
         """
         insert into activity_events (
             id, employee_id, source, event_type, title,
-            start_dt, end_dt, timezone, is_recurring, is_outside_schedule
+            start_dt, end_dt, timezone, recurrence_rule,
+            is_recurring, is_outside_schedule
         )
-        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             uuid4(),
@@ -123,7 +125,8 @@ def _insert_event(
             start_dt,
             end_dt,
             timezone,
-            False,
+            recurrence_rule,
+            recurrence_rule is not None,
             is_outside_schedule,
         ),
     )
@@ -168,6 +171,50 @@ async def test_recompute_metrics_populates_zone_and_hr_factors(
     assert hr_factor_value == 1.0  # все события из календаря, ни одного HR
     assert risk_score > 0.0
     assert risk_level in {"low", "medium", "high", "critical"}
+
+
+@pytest.mark.asyncio
+async def test_recompute_metrics_expands_recurring_event_in_window(
+    client: AsyncClient,
+) -> None:
+    """Один RRULE-мастер в БД должен дать N occurrences в метриках (§18)."""
+    now = datetime.now(UTC)
+    window_days = 14
+    with psycopg.connect(_sync_database_url()) as connection:
+        employee_id = _insert_employee(connection, timezone="Europe/Moscow")
+        # Ежедневная встреча 1ч в течение 10 дней, стартует 12 дней назад.
+        master_start = (now - timedelta(days=12)).replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
+        _insert_event(
+            connection=connection,
+            employee_id=employee_id,
+            start_dt=master_start,
+            end_dt=master_start + timedelta(hours=1),
+            timezone="Europe/Moscow",
+            source="calendar",
+            recurrence_rule="FREQ=DAILY;COUNT=10",
+        )
+
+    response = await client.post(
+        f"/api/v1/admin/recompute-metrics?window_days={window_days}"
+    )
+    assert response.status_code == 200
+
+    with psycopg.connect(_sync_database_url()) as connection:
+        row = connection.execute(
+            "select total_events_count, load_level"
+            " from employee_metrics where employee_id = %s",
+            (employee_id,),
+        ).fetchone()
+    assert row is not None
+    total_events, load = row
+    # До фикса было бы 1 (один master-row). С expand_event должно быть ~10.
+    assert total_events >= 8, (
+        f"recurrence_rule не развернулся: total_events_count={total_events}"
+    )
+    # 10 occurrences по 1ч = 10ч busy. Load > 0.
+    assert load > 0.0
 
 
 @pytest.mark.asyncio

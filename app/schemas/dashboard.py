@@ -13,3 +13,9 @@ class DashboardSummaryResponse(BaseModel):
     last_calculation_at: datetime | None
     actual_schedules_count: int
     vacations_this_month: int
+    # Агрегаты для /metrics и HR-дашборда. Считаются по EmployeeMetric;
+    # если метрик нет — отдаются нули.
+    average_actuality_score: float = 0.0
+    average_risk_score: float = 0.0
+    conflicts_rate: float = 0.0
+    team_size: int = 0

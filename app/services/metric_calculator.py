@@ -17,7 +17,7 @@ from app.analytics.metrics import (
     risk_score,
     zone_factor,
 )
-from app.models.activity_event import ActivityEvent
+from app.analytics.recurrence import expand_event
 from app.models.employee import Employee
 from app.models.employee_metric import EmployeeMetric
 from app.models.employee_metric_snapshot import EmployeeMetricSnapshot
@@ -29,6 +29,8 @@ from app.repositories.employee_metrics import EmployeeMetricRepository
 from app.repositories.employees import EmployeeRepository
 from app.repositories.schedule_exceptions import ScheduleExceptionRepository
 from app.repositories.work_schedules import WorkScheduleRepository
+from app.services.notification_triggers import maybe_emit_for_metric
+from app.services.notifications import NotificationService
 
 DEFAULT_WINDOW_DAYS = 14
 HR_EVENT_SOURCES = frozenset({"hr", "timesheet"})
@@ -42,7 +44,12 @@ class MetricCalculatorService:
     Реализует пайплайн §5–§10 ТЗ: Ai, Ci, Li, Zi, Hi → Ri, risk_level.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        notifications: NotificationService | None = None,
+    ) -> None:
         self.session = session
         self.employees = EmployeeRepository(session)
         self.metrics = EmployeeMetricRepository(session)
@@ -50,6 +57,7 @@ class MetricCalculatorService:
         self.events = ActivityEventRepository(session)
         self.schedules = WorkScheduleRepository(session)
         self.exceptions = ScheduleExceptionRepository(session)
+        self.notifications = notifications or NotificationService(session)
 
     async def recompute_all(
         self,
@@ -118,7 +126,11 @@ class MetricCalculatorService:
         actuality = actuality_score(days)
 
         schedule_window = _schedule_window(schedule)
-        intervals = [_to_interval(event) for event in events]
+        # Разворачиваем повторяющиеся события в occurrences внутри окна —
+        # без этого Ci/Li занижены для команд с регулярными митингами (§18 ТЗ).
+        intervals: list[EventInterval] = []
+        for event in events:
+            intervals.extend(expand_event(event, window_start, window_end))
         outside_count = count_outside_events(intervals, schedule_window)
         conflict = conflict_rate(outside_count, len(intervals))
 
@@ -140,6 +152,11 @@ class MetricCalculatorService:
         )
         level = risk_level(score)
 
+        # Запоминаем предыдущую метрику ДО upsert: триггеру нужно сравнение
+        # старого и нового risk_level, чтобы понять «вырос ли риск».
+        previous = await self.metrics.get_for_employee(employee.id)
+        previous_snapshot = _shallow_metric_copy(previous) if previous else None
+
         metric = EmployeeMetric(
             id=uuid4(),
             employee_id=employee.id,
@@ -157,6 +174,24 @@ class MetricCalculatorService:
         )
         saved = await self.metrics.upsert(metric)
         await self.snapshots.add(_snapshot_from_metric(saved, taken_at))
+
+        # Smart-уведомления (§16 п.6): triggered by metric, not by user action.
+        # Сбои здесь не должны валить пересчёт метрик — поэтому ловим всё.
+        try:
+            await maybe_emit_for_metric(
+                employee=employee,
+                previous=previous_snapshot,
+                current=saved,
+                notifications=self.notifications,
+                now=taken_at,
+            )
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "maybe_emit_for_metric failed for employee_id=%s", employee.id
+            )
+
         return saved
 
 
@@ -167,6 +202,26 @@ def _schedule_window(schedule: WorkSchedule | None) -> WorkScheduleWindow | None
         work_days=tuple(schedule.work_days),
         start_time=schedule.start_time,
         end_time=schedule.end_time,
+    )
+
+
+def _shallow_metric_copy(metric: EmployeeMetric) -> EmployeeMetric:
+    """Снимок значений до upsert: сам upsert мутирует существующую row в ORM,
+    поэтому без detached-копии триггер увидит уже новые risk_level/Ai/Ci."""
+    return EmployeeMetric(
+        id=metric.id,
+        employee_id=metric.employee_id,
+        calculated_at=metric.calculated_at,
+        days_since_update=metric.days_since_update,
+        actuality_score=metric.actuality_score,
+        outside_events_count=metric.outside_events_count,
+        total_events_count=metric.total_events_count,
+        conflict_rate=metric.conflict_rate,
+        load_level=metric.load_level,
+        zone_factor=metric.zone_factor,
+        hr_factor=metric.hr_factor,
+        risk_score=metric.risk_score,
+        risk_level=metric.risk_level,
     )
 
 
@@ -188,14 +243,6 @@ def _snapshot_from_metric(
         hr_factor=metric.hr_factor,
         risk_score=metric.risk_score,
         risk_level=metric.risk_level,
-    )
-
-
-def _to_interval(event: ActivityEvent) -> EventInterval:
-    return EventInterval(
-        start_dt=event.start_dt,
-        end_dt=event.end_dt,
-        is_outside_schedule=event.is_outside_schedule,
     )
 
 

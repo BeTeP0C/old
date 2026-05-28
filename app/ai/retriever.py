@@ -126,6 +126,69 @@ class AiContextRetriever:
             ],
         }
 
+    async def get_overview_context(self, top_n: int = 5) -> dict[str, Any]:
+        """Срез по всем сотрудникам для general-вопросов HR (§16 п.1, п.3).
+
+        Возвращает агрегаты + топы по нагрузке / устаревшим графикам /
+        конфликтности — чтобы LLM мог отвечать на вопросы вида
+        «кто перегружен?» / «у кого устарел график?» без явного employee_id.
+        """
+        employees = await self.employees.list()
+        if not employees:
+            return {"question_scope": "general", "employees_total": 0}
+
+        employee_by_id = {employee.id: employee for employee in employees}
+        metrics = await self.metrics.list_for_employees(list(employee_by_id))
+
+        def _row(metric: object) -> dict[str, Any]:
+            employee = employee_by_id.get(metric.employee_id)  # type: ignore[attr-defined]
+            return {
+                "employee_id": str(metric.employee_id),  # type: ignore[attr-defined]
+                "full_name": employee.full_name if employee else None,
+                "position": employee.position if employee else None,
+                "actuality_score": metric.actuality_score,  # type: ignore[attr-defined]
+                "load_level": metric.load_level,  # type: ignore[attr-defined]
+                "conflict_rate": metric.conflict_rate,  # type: ignore[attr-defined]
+                "days_since_update": metric.days_since_update,  # type: ignore[attr-defined]
+                "risk_level": metric.risk_level,  # type: ignore[attr-defined]
+                "risk_score": metric.risk_score,  # type: ignore[attr-defined]
+            }
+
+        rows = [_row(metric) for metric in metrics]
+
+        risk_breakdown = {"low": 0, "medium": 0, "high": 0, "critical": 0}
+        for row in rows:
+            level = row["risk_level"]
+            if level in risk_breakdown:
+                risk_breakdown[level] += 1
+
+        overloaded = sorted(
+            (row for row in rows if row["load_level"] > 0.8),
+            key=lambda r: r["load_level"],
+            reverse=True,
+        )[:top_n]
+        outdated = sorted(
+            (row for row in rows if row["actuality_score"] < 0.7),
+            key=lambda r: r["actuality_score"],
+        )[:top_n]
+        high_conflict = sorted(
+            (row for row in rows if row["conflict_rate"] > 0.15),
+            key=lambda r: r["conflict_rate"],
+            reverse=True,
+        )[:top_n]
+        highest_risk = sorted(rows, key=lambda r: r["risk_score"], reverse=True)[:top_n]
+
+        return {
+            "question_scope": "general",
+            "employees_total": len(employees),
+            "employees_with_metrics": len(metrics),
+            "risk_level_breakdown": risk_breakdown,
+            "top_overloaded": overloaded,
+            "top_outdated_schedules": outdated,
+            "top_conflicts": high_conflict,
+            "top_risk": highest_risk,
+        }
+
     async def get_recent_employee_events(
         self,
         employee_id: UUID,

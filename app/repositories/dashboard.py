@@ -50,6 +50,31 @@ class DashboardRepository:
             select(func.coalesce(func.sum(EmployeeMetric.outside_events_count), 0))
         )
 
+    async def avg_actuality_score(self) -> float:
+        result = await self.session.execute(
+            select(func.coalesce(func.avg(EmployeeMetric.actuality_score), 0.0))
+        )
+        return float(result.scalar_one())
+
+    async def avg_risk_score(self) -> float:
+        result = await self.session.execute(
+            select(func.coalesce(func.avg(EmployeeMetric.risk_score), 0.0))
+        )
+        return float(result.scalar_one())
+
+    async def conflicts_rate(self) -> float:
+        result = await self.session.execute(
+            select(
+                func.coalesce(func.sum(EmployeeMetric.outside_events_count), 0),
+                func.coalesce(func.sum(EmployeeMetric.total_events_count), 0),
+            )
+        )
+        outside, total = result.one()
+        total_int = int(total)
+        if total_int == 0:
+            return 0.0
+        return float(outside) / float(total_int)
+
     async def last_calculation_at(self) -> datetime | None:
         result = await self.session.execute(select(func.max(EmployeeMetric.calculated_at)))
         return result.scalar_one_or_none()
