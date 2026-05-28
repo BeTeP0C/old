@@ -2,6 +2,8 @@
 
 FastAPI MVP backend for storing employees, teams, schedules, exceptions, imported activity events, calculated metrics, recommendations, and dashboard summaries.
 
+Full production-oriented technical documentation: [docs/technical-documentation.md](docs/technical-documentation.md).
+
 ## Stack
 
 - Python 3.12
