@@ -1,8 +1,10 @@
 from app.schemas.ai import (
+    AiAction,
     AiChatRequest,
     AiChatResponse,
     AiChunkResponse,
     AiDocumentResponse,
+    AiEntity,
     AiReason,
     AiRecommendedAction,
     DocumentIngestRequest,
@@ -12,10 +14,12 @@ from app.schemas.ai import (
 )
 
 __all__ = (
+    "AiAction",
     "AiChatRequest",
     "AiChatResponse",
     "AiChunkResponse",
     "AiDocumentResponse",
+    "AiEntity",
     "AiReason",
     "AiRecommendedAction",
     "DocumentIngestRequest",

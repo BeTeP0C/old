@@ -17,15 +17,17 @@ from app.ai.prompts import (
     build_messages,
 )
 from app.ai.rag import RagRetriever
-from app.ai.retriever import AiContextRetriever
+from app.ai.retriever import AiContextRetriever, is_scheduling_question
 from app.core.config import Settings, settings
 from app.models.ai_chunk import AiChunk
 from app.models.ai_document import AiDocument
 from app.repositories.ai_chunks import AiChunkRepository
 from app.repositories.ai_documents import AiDocumentRepository
 from app.schemas.ai import (
+    AiAction,
     AiChatRequest,
     AiChatResponse,
+    AiEntity,
     DocumentIngestRequest,
     DocumentIngestResponse,
     EmployeeAiExplanationResponse,
@@ -58,7 +60,8 @@ class AIService:
             rag_context, _chunks = await self.rag.build_rag_context(payload.question)
         prompt = build_general_rag_chat_prompt(payload.question, context, rag_context)
         raw_response = await self.llm_client.chat_json(build_messages(prompt))
-        return self._validate_ai_response(raw_response, AiChatResponse)
+        response = self._validate_ai_response(raw_response, AiChatResponse)
+        return self._enrich_response(response, context, payload)
 
     async def chat_stream(self, payload: AiChatRequest) -> AsyncIterator[dict[str, Any]]:
         """Streams partial deltas of the model output, then a final validated event.
@@ -109,6 +112,7 @@ class AIService:
                 "data": {"detail": "AI response does not match expected JSON schema"},
             }
             return
+        validated = self._enrich_response(validated, context, payload)
         yield {"event": "done", "data": {"response": validated.model_dump(mode="json")}}
 
     async def explain_employee(
@@ -168,11 +172,12 @@ class AIService:
 
     async def _build_sql_context(self, payload: AiChatRequest) -> dict[str, Any]:
         if not payload.employee_id and not payload.team_id:
-            return await self.context.get_overview_context()
+            return await self.context.get_overview_context(question=payload.question)
         context: dict[str, Any] = {}
         if payload.employee_id:
             context["employee_context"] = await self.context.get_employee_context(
-                payload.employee_id
+                payload.employee_id,
+                include_availability=True,
             )
         if payload.team_id:
             context["team_context"] = await self.context.get_team_context(payload.team_id)
@@ -195,6 +200,128 @@ class AIService:
             return schema.model_validate(data)
         except ValidationError as exc:
             raise AIServiceError("AI response does not match expected JSON schema") from exc
+
+    def _enrich_response(
+        self,
+        response: AiChatResponse,
+        context: dict[str, Any],
+        payload: AiChatRequest,
+    ) -> AiChatResponse:
+        """Детерминированно добавляет кликабельные сущности и действия-переходы.
+
+        Сущности/действия НЕ берутся у модели (она ненадёжна с id) — мы сами
+        сопоставляем имена сотрудников/команд из контекста с текстом ответа.
+        """
+        employees, teams = _index_people_and_teams(context)
+        text = f"{response.summary}\n{response.answer}".lower()
+        scheduling = is_scheduling_question(payload.question)
+
+        employee_ids: list[str] = [
+            eid for eid, name in employees.items() if _name_in_text(name, text)
+        ]
+        scoped_employee = str(payload.employee_id) if payload.employee_id else None
+        if scoped_employee and scoped_employee in employees and scoped_employee not in employee_ids:
+            employee_ids.append(scoped_employee)
+
+        scoped_team = str(payload.team_id) if payload.team_id else None
+        team_ids: list[str] = [
+            tid
+            for tid, name in teams.items()
+            if tid == scoped_team or _team_in_text(name, text)
+        ]
+
+        entities: list[AiEntity] = [
+            AiEntity(type="employee", id=UUID(eid), label=employees[eid]) for eid in employee_ids
+        ]
+        entities += [AiEntity(type="team", id=UUID(tid), label=teams[tid]) for tid in team_ids]
+
+        actions: list[AiAction] = []
+        if scheduling:
+            meeting_team_ids = team_ids or (list(teams) if len(teams) == 1 else [])
+            for tid in meeting_team_ids:
+                actions.append(
+                    AiAction(
+                        type="open_team_meeting",
+                        label=f"Подобрать время встречи · {teams[tid]}",
+                        team_id=UUID(tid),
+                    )
+                )
+        if response.recommended_actions:
+            actions.append(
+                AiAction(type="open_recommendations", label="Открыть все рекомендации")
+            )
+
+        return response.model_copy(update={"entities": entities, "actions": actions})
+
+
+def _index_people_and_teams(
+    context: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Собирает id→имя сотрудников и id→название команд из любого варианта
+    контекста (overview / employee_context / team_context)."""
+    employees: dict[str, str] = {}
+    teams: dict[str, str] = {}
+
+    def add_employee(raw_id: Any, name: Any) -> None:
+        if raw_id and isinstance(name, str) and name:
+            employees[str(raw_id)] = name
+
+    def add_team(raw_id: Any, name: Any) -> None:
+        if raw_id and isinstance(name, str) and name:
+            teams[str(raw_id)] = name
+
+    for key in ("top_overloaded", "top_outdated_schedules", "top_conflicts", "top_risk"):
+        for row in context.get(key, []) or []:
+            add_employee(row.get("employee_id"), row.get("full_name"))
+    for option in context.get("team_meeting_options", []) or []:
+        add_team(option.get("team_id"), option.get("team_name"))
+
+    employee_ctx = context.get("employee_context")
+    if isinstance(employee_ctx, dict):
+        employee = employee_ctx.get("employee") or {}
+        add_employee(employee.get("id"), employee.get("full_name"))
+
+    team_ctx = context.get("team_context")
+    if isinstance(team_ctx, dict):
+        team = team_ctx.get("team") or {}
+        add_team(team.get("id"), team.get("name"))
+        for member in team_ctx.get("members", []) or []:
+            employee = member.get("employee") or {}
+            add_employee(employee.get("id"), employee.get("full_name"))
+
+    return employees, teams
+
+
+def _name_in_text(full_name: str, low_text: str) -> bool:
+    """Упоминается ли сотрудник в тексте. Матчит по фамилии (последнее слово) со
+    срезом последней буквы — чтобы пережить русские склонения
+    (Сидорова → «Сидоровой», «Сидорову»)."""
+    if not full_name:
+        return False
+    if full_name.lower() in low_text:
+        return True
+    parts = full_name.split()
+    if not parts:
+        return False
+    surname = parts[-1].lower()
+    if len(surname) < 5:
+        return False
+    stem = surname[:-1]
+    return stem in low_text
+
+
+def _team_in_text(team_name: str, low_text: str) -> bool:
+    """Упоминается ли команда в тексте. Матчит по значимым словам названия со
+    срезом окончания, чтобы пережить склонение («Команда разработки» →
+    «командой разработки»)."""
+    if not team_name:
+        return False
+    if team_name.lower() in low_text:
+        return True
+    for token in team_name.lower().split():
+        if len(token) >= 5 and token[:-1] in low_text:
+            return True
+    return False
 
 
 __all__ = ("AIService", "AIServiceError", "InvalidOperationError", "NotFoundError")

@@ -3,17 +3,56 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentEmployeeDep, get_db_session
+from app.core.security import decode_access_token
 from app.schemas.common import ErrorResponse
 from app.schemas.notification import NotificationResponse
 from app.services.exceptions import InvalidOperationError, NotFoundError
+from app.services.notification_hub import hub
 from app.services.notifications import NotificationService
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+# Код закрытия WS «policy violation» (RFC 6455) — используем при невалидном токене.
+_WS_POLICY_VIOLATION = 1008
+
+
+@router.websocket("/ws")
+async def notifications_ws(websocket: WebSocket, token: str = Query(...)) -> None:
+    """Realtime-канал уведомлений. Аутентификация — access-токен в query (?token=).
+
+    Сервер шлёт сигналы `{"type": "notifications:refresh"}`; клиент по ним
+    перезапрашивает список через GET /notifications. Входящие сообщения клиента
+    игнорируются (нужны только для keepalive/detection отключения).
+    """
+    try:
+        payload = decode_access_token(token)
+    except ValueError:
+        await websocket.close(code=_WS_POLICY_VIOLATION)
+        return
+
+    employee_id = payload.employee_id
+    await websocket.accept()
+    await hub.register(employee_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await hub.unregister(employee_id, websocket)
 
 error_responses: dict[int | str, dict[str, Any]] = {
     status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},

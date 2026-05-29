@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: worktime-sync-postgres
+    environment:
+      POSTGRES_DB: worktime_sync
+      POSTGRES_USER: worktime
+      POSTGRES_PASSWORD: worktime
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worktime -d worktime_sync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: worktime-sync-api
+    # Все секреты (JWT_SECRET_KEY, OPENROUTER_API_KEY, VK_*) и подключение к
+    # БД читаются из локального .env (он в .gitignore). Не коммитьте
+    # фактические значения секретов в этот compose-файл.
+    env_file:
+      - .env
+    environment:
+      # Переопределяем только то, что отличается от .env (контейнерные адреса).
+      # Внутри сети контейнеров postgres доступен под именем сервиса 'postgres',
+      # а не localhost.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      DATABASE_URL: postgresql+asyncpg://worktime:worktime@postgres:5432/worktime_sync
+      APP_PUBLIC_URL: http://localhost:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

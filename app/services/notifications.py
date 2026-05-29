@@ -125,6 +125,54 @@ class NotificationService:
 
         return created
 
+    async def notify_recipient(
+        self,
+        *,
+        recipient_id: UUID,
+        type: str,
+        severity: str,
+        title: str,
+        body: str,
+        subject_type: str,
+        subject_id: UUID,
+        dedup_bucket: str,
+        payload: dict | None = None,
+        now: datetime | None = None,
+    ) -> Notification | None:
+        """Создаёт уведомление для КОНКРЕТНОГО получателя, минуя RecipientResolver.
+
+        Нужно для «квитанций» по действиям (подтвердил график → инициатору;
+        добавили событие → сотруднику), где адресат известен точно. Текст берём
+        как есть (без LLM-генерации) — он короткий и детерминированный.
+        Добавляется в текущую транзакцию; коммит — на стороне вызывающего сервиса.
+        """
+        now = now or datetime.now(UTC)
+        recipient = await self.employees.get(recipient_id)
+        if recipient is None:
+            return None
+        draft = NotificationDraft(
+            type=type,
+            severity=severity,
+            title=title,
+            body=body,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            dedup_bucket=dedup_bucket,
+            payload=payload,
+        )
+        schedule = await self.schedules.get_active_for_employee(recipient.id)
+        decision = decide_delivery(
+            recipient=recipient, schedule=schedule, severity=draft.severity, now=now
+        )
+        return await self._insert_with_dedup(
+            draft=draft,
+            recipient=recipient,
+            title=title,
+            body=body,
+            status=decision.status,
+            deferred_until=decision.deferred_until,
+        )
+
     async def _insert_with_dedup(
         self,
         *,

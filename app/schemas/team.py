@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.team_member import TeamMemberResponse
+
 TeamRole = Literal["lead", "pm", "analyst", "member"]
 
 
@@ -33,6 +35,9 @@ class TeamResponse(BaseModel):
     description: str | None
     avatar_url: str | None
     members_count: int | None = None
+    # Подробный список участников возвращается только из /teams/{id} (detail-эндпоинт),
+    # в листингах остаётся None, чтобы не делать N+1 запросов.
+    members: list[TeamMemberResponse] | None = None
     created_at: datetime
     updated_at: datetime
 

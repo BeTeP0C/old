@@ -146,9 +146,17 @@ def recommend_meeting_windows(
     if duration_minutes <= 0 or range_start >= range_end or not availability:
         return []
 
-    effective_required = required_ids or frozenset(
-        employee.employee_id for employee in availability
-    )
+    # Если переданы только optional — required ДОЛЖЕН остаться пустым,
+    # иначе алгоритм требует всю команду одновременно и ничего не находит,
+    # когда участники не пересекаются на 100%. Сервис уже различает кейсы
+    # (нет required + нет optional → required = all_team), сюда добавляем
+    # только защиту от случая "и тех, и других нет".
+    if not required_ids and not optional_ids:
+        effective_required = frozenset(
+            employee.employee_id for employee in availability
+        )
+    else:
+        effective_required = required_ids
 
     duration = timedelta(minutes=duration_minutes)
     slot_step = timedelta(minutes=MEETING_SLOT_MINUTES)

@@ -4,10 +4,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity_event import ActivityEvent
+from app.models.notification import (
+    NOTIFICATION_SEVERITY_MEDIUM,
+    NOTIFICATION_TYPE_EVENT_ASSIGNED,
+)
+from app.models.roadmap_item import ROADMAP_SUBJECT_EMPLOYEE
 from app.repositories.activity_events import ActivityEventRepository
 from app.repositories.employees import EmployeeRepository
 from app.schemas.activity_event import ActivityEventCreate, ActivityEventImportResult
 from app.services.exceptions import InvalidOperationError, NotFoundError
+from app.services.notification_hub import hub
+from app.services.notifications import NotificationService
 
 
 class ActivityEventService:
@@ -15,12 +22,42 @@ class ActivityEventService:
         self.session = session
         self.employees = EmployeeRepository(session)
         self.events = ActivityEventRepository(session)
+        self.notifications = NotificationService(session)
 
-    async def create_manual(self, payload: ActivityEventCreate) -> ActivityEvent:
+    async def create_manual(
+        self,
+        payload: ActivityEventCreate,
+        actor_id: UUID | None = None,
+    ) -> ActivityEvent:
         event = await self._create_one(payload)
         if event is None:
             raise InvalidOperationError("duplicate activity event external id")
+
+        # Если событие сотруднику завёл КТО-ТО ДРУГОЙ (менеджер/PM/HR) — уведомляем
+        # сотрудника, иначе он «не в курсе» о появившемся в календаре событии.
+        notify_employee = actor_id is not None and actor_id != payload.employee_id
+        if notify_employee:
+            actor = await self.employees.get(actor_id)
+            actor_name = actor.full_name if actor is not None else "Менеджер"
+            await self.notifications.notify_recipient(
+                recipient_id=payload.employee_id,
+                type=NOTIFICATION_TYPE_EVENT_ASSIGNED,
+                severity=NOTIFICATION_SEVERITY_MEDIUM,
+                title="Новое событие в календаре",
+                body=f"{actor_name} добавил(а) вам событие «{payload.title}».",
+                subject_type=ROADMAP_SUBJECT_EMPLOYEE,
+                subject_id=payload.employee_id,
+                dedup_bucket=f"event:{event.id}",
+                payload={
+                    "event_id": str(event.id),
+                    "title": payload.title,
+                    "start_dt": payload.start_dt.isoformat(),
+                },
+            )
+
         await self.session.commit()
+        if notify_employee:
+            await hub.signal(payload.employee_id)
         return event
 
     async def import_events(self, payloads: list[ActivityEventCreate]) -> ActivityEventImportResult:

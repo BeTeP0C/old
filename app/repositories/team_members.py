@@ -28,6 +28,14 @@ class TeamMemberRepository:
         )
         return list(result.scalars().all())
 
+    async def list_for_team(self, team_id: UUID) -> list[TeamMember]:
+        result = await self.session.execute(
+            select(TeamMember)
+            .where(TeamMember.team_id == team_id)
+            .order_by(TeamMember.created_at)
+        )
+        return list(result.scalars().all())
+
     async def list_team_ids_for_employee(self, employee_id: UUID) -> list[UUID]:
         result = await self.session.execute(
             select(TeamMember.team_id).where(TeamMember.employee_id == employee_id)

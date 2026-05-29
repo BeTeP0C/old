@@ -63,6 +63,24 @@ ADMIN_EMAIL = "test@example.com"
 ADMIN_PASSWORD = "pass1234"
 ADMIN_FULL_NAME = "Тестовый Администратор"
 
+# Пароль для не-админских демо-аккаунтов.
+DEMO_PASSWORD = "demo1234"
+
+# 5 демо-аккаунтов (по одному на роль) с паролями и полностью заполненными
+# профилями — показываются на странице входа. Первый совпадает с ADMIN_*.
+# (email, password, role, full_name, position, timezone, work_format)
+DEMO_ACCOUNTS: list[tuple[str, str, str, str, str, str, str]] = [
+    (ADMIN_EMAIL, ADMIN_PASSWORD, "admin", ADMIN_FULL_NAME, "Администратор", "Europe/Moscow", "hybrid"),
+    ("manager@worktime.dev", DEMO_PASSWORD, "manager", "Игорь Соколов",
+     "Руководитель отдела разработки", "Europe/Moscow", "office"),
+    ("hr@worktime.dev", DEMO_PASSWORD, "hr", "Елена Кадрова",
+     "HR-специалист", "Europe/Moscow", "hybrid"),
+    ("pm@worktime.dev", DEMO_PASSWORD, "pm", "Павел Орлов",
+     "Проектный менеджер", "Europe/Moscow", "remote"),
+    ("employee@worktime.dev", DEMO_PASSWORD, "employee", "Семён Зайцев",
+     "Frontend-разработчик", "Asia/Yekaterinburg", "remote"),
+]
+
 TIMEZONES = ["Europe/Moscow", "Europe/Kaliningrad", "Asia/Yekaterinburg", "Europe/London"]
 WORK_FORMATS = ["office", "remote", "hybrid"]
 
@@ -157,6 +175,7 @@ async def reset_tables(session: AsyncSession) -> None:
     tables = [
         "notifications",
         "roadmap_items",
+        "import_logs",
         "activity_events",
         "schedule_confirmation_requests",
         "schedule_exceptions",
@@ -173,17 +192,21 @@ async def reset_tables(session: AsyncSession) -> None:
 
 def make_employees(rng: random.Random, *, limit: int | None = None) -> list[Employee]:
     employees: list[Employee] = []
-    employees.append(
-        Employee(
-            email=ADMIN_EMAIL,
-            password_hash=hash_password(ADMIN_PASSWORD),
-            full_name=ADMIN_FULL_NAME,
-            role="manager",
-            position="Руководитель",
-            timezone="Europe/Moscow",
-            work_format="hybrid",
+    # Демо-аккаунты (по роли, с паролями). Первый — админ; роль admin
+    # обязательна, иначе POST /employees/full и прочие admin/hr-only эндпоинты
+    # отдают 403 под этим логином.
+    for email, password, role, full_name, position, tz, work_format in DEMO_ACCOUNTS:
+        employees.append(
+            Employee(
+                email=email,
+                password_hash=hash_password(password),
+                full_name=full_name,
+                role=role,
+                position=position,
+                timezone=tz,
+                work_format=work_format,
+            )
         )
-    )
     names = EMPLOYEE_NAMES if limit is None else EMPLOYEE_NAMES[:limit]
     for first, last, position in names:
         is_head = "Тимлид" in position or position in {"Project Manager", "Product Manager"}
@@ -251,9 +274,9 @@ def make_team_members(
             pms_assigned.add(pm.id)
             members.append(TeamMember(team=team, employee=pm, role_in_team="pm"))
 
-    # остальные — членами команд
+    # остальные — членами команд (включая админа/демо — чтобы профиль был с командой)
     leaders_and_pms = leads_assigned | pms_assigned
-    pool = [e for e in employees if e.email != ADMIN_EMAIL and e.id not in leaders_and_pms]
+    pool = [e for e in employees if e.id not in leaders_and_pms]
     rng.shuffle(pool)
 
     # каждому 1–2 команды; держим целевое распределение ~5-8 на команду
@@ -415,8 +438,6 @@ def make_activity_events(
     types_distribution = ["meeting"] * 5 + ["focus"] * 3 + ["call"] * 2
 
     for emp in employees:
-        if emp.email == ADMIN_EMAIL:
-            continue
         sched = schedules_by_emp.get(emp.id)
         count = rng.randint(20, 40)
         for i in range(count):
@@ -478,7 +499,9 @@ def make_metrics(
     """Распределяем risk_level: 35% low, 25% medium, 25% high, 15% critical."""
     metrics: list[EmployeeMetric] = []
     now = now_utc()
-    eligible = [e for e in employees if e.email != ADMIN_EMAIL]
+    # Включаем всех (в т.ч. админа/демо-аккаунты), чтобы их профиль был заполнен
+    # — иначе «Мой Ai» показывает «Нет данных».
+    eligible = list(employees)
     n = len(eligible)
     distribution = (
         ["low"] * int(n * 0.35)
@@ -993,7 +1016,9 @@ async def run_seed(
         by_risk[m.risk_level] = by_risk.get(m.risk_level, 0) + 1
     print()
     print("Готово.")
-    print(f"  admin login: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+    print("  демо-аккаунты (email / пароль / роль):")
+    for email, password, role, *_ in DEMO_ACCOUNTS:
+        print(f"    {email} / {password} / {role}")
     print(f"  распределение risk_level: {by_risk}")
 
     return SeedResult(

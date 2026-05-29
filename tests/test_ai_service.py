@@ -36,7 +36,11 @@ class InvalidLlmClient:
 
 
 class FakeContext:
-    async def get_employee_context(self, employee_id: object) -> dict[str, object]:
+    async def get_employee_context(
+        self,
+        employee_id: object,
+        include_availability: bool = False,
+    ) -> dict[str, object]:
         return {"employee_metrics": {"risk_score": 0.75, "risk_level": "high"}}
 
     async def get_team_context(self, team_id: object) -> dict[str, object]:

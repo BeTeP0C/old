@@ -10,6 +10,8 @@ from app.api.deps import CurrentEmployeeDep, get_db_session, require_roles
 from app.core.config import settings
 from app.core.roles import EmployeeRole
 from app.models.employee import Employee
+from app.models.import_log import ImportLog
+from app.repositories.import_logs import ImportLogRepository
 from app.services.metric_calculator import DEFAULT_WINDOW_DAYS, MetricCalculatorService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -66,7 +68,7 @@ class SeedDemoResponse(BaseModel):
 async def seed_demo(
     payload: SeedDemoRequest,
     session: SessionDep,
-    _actor: Annotated[Employee, Depends(require_roles(EmployeeRole.ADMIN))],
+    actor: Annotated[Employee, Depends(require_roles(EmployeeRole.ADMIN))],
 ) -> SeedDemoResponse:
     """Создаёт демо-набор данных. Доступно только при APP_DEBUG=true."""
     if not settings.debug:
@@ -86,4 +88,18 @@ async def seed_demo(
         with_roadmap=payload.with_roadmap,
     )
     took_ms = int((time.perf_counter() - started_at) * 1000)
+    # Фиксируем в журнале загрузок, чтобы запись о генерации демо-данных
+    # переживала перезагрузку страницы /upload (как и обычные импорты).
+    await ImportLogRepository(session).create(
+        ImportLog(
+            source="seed",
+            file_name="Демо-набор",
+            status="ok",
+            imported_count=result.events_created,
+            skipped_duplicate_count=0,
+            error_count=0,
+            created_by=actor.id,
+        )
+    )
+    await session.commit()
     return SeedDemoResponse(**asdict(result), took_ms=took_ms)

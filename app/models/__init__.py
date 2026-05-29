@@ -6,6 +6,7 @@ from app.models.change_history import ChangeHistory
 from app.models.employee import Employee
 from app.models.employee_metric import EmployeeMetric
 from app.models.employee_metric_snapshot import EmployeeMetricSnapshot
+from app.models.import_log import ImportLog
 from app.models.notification import Notification
 from app.models.refresh_token import RefreshToken
 from app.models.roadmap_item import RoadmapItem
@@ -24,6 +25,7 @@ __all__ = (
     "Employee",
     "EmployeeMetric",
     "EmployeeMetricSnapshot",
+    "ImportLog",
     "Notification",
     "RefreshToken",
     "RoadmapItem",

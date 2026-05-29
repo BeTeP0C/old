@@ -73,9 +73,22 @@ async def list_teams(
     teams_with_counts = await TeamService(session).list_with_counts(skip=skip, limit=limit)
     items: list[TeamResponse] = []
     for team, count in teams_with_counts:
-        item = TeamResponse.model_validate(team)
-        item.members_count = count
-        items.append(item)
+        # Конструируем response явно, чтобы pydantic не пытался лениво загрузить
+        # relationship `team.members` в async-контексте (MissingGreenlet).
+        # В листинге `members` остаётся None — детальный состав отдаём только
+        # из /teams/{id}.
+        items.append(
+            TeamResponse(
+                id=team.id,
+                name=team.name,
+                description=team.description,
+                avatar_url=team.avatar_url,
+                members_count=count,
+                members=None,
+                created_at=team.created_at,
+                updated_at=team.updated_at,
+            )
+        )
     return items
 
 
@@ -120,9 +133,19 @@ async def get_team(
         team = await service.get(team_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    response = TeamResponse.model_validate(team)
-    response.members_count = await service.team_members.count_for_team(team_id)
-    return response
+    members = await service.team_members.list_for_team(team_id)
+    # Конструируем response явно, чтобы не триггерить lazy-load relationship
+    # `team.members` (он вызвал бы MissingGreenlet в async-контексте).
+    return TeamResponse(
+        id=team.id,
+        name=team.name,
+        description=team.description,
+        avatar_url=team.avatar_url,
+        members_count=len(members),
+        members=[TeamMemberResponse.model_validate(m) for m in members],
+        created_at=team.created_at,
+        updated_at=team.updated_at,
+    )
 
 
 @router.patch("/{team_id}", response_model=TeamResponse, responses=error_responses)

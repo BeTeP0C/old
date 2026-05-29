@@ -88,6 +88,55 @@ class TeamAvailabilityService:
             ],
         )
 
+    async def get_employee_availability(
+        self,
+        employee_id: UUID,
+        range_start: datetime,
+        range_end: datetime,
+    ) -> list[TimeWindow]:
+        """Свободные окна одного сотрудника за период (для AI-контекста «когда
+        свободен X»). Считает рабочий график минус отпуска/больничные и события."""
+        if range_start >= range_end:
+            raise InvalidOperationError("range_start must be earlier than range_end")
+        if await self.employees.get(employee_id) is None:
+            raise NotFoundError("employee not found")
+
+        schedules = await self.schedules.list_active_for_employees([employee_id])
+        exceptions = await self.exceptions.list_for_employees_in_range(
+            [employee_id], range_start, range_end
+        )
+        events = await self.events.list_for_employees_in_range(
+            [employee_id], range_start, range_end
+        )
+        employee_input = EmployeeAvailabilityInput(
+            employee_id=str(employee_id),
+            schedule_windows=tuple(
+                window
+                for schedule in schedules
+                for window in _schedule_windows_for_range(schedule, range_start, range_end)
+            ),
+            busy_windows=tuple(
+                [
+                    *(
+                        TimeWindow(item.start_dt, item.end_dt)
+                        for item in exceptions
+                        if item.type in EXCLUDED_EXCEPTION_TYPES
+                    ),
+                    *(
+                        TimeWindow(interval.start_dt, interval.end_dt)
+                        for item in events
+                        for interval in expand_event(item, range_start, range_end)
+                    ),
+                ]
+            ),
+        )
+        availability = calculate_employee_availability(
+            employee_input,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        return list(availability.available_windows)
+
     async def recommend_meetings(
         self,
         team_id: UUID,

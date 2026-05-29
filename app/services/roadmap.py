@@ -82,7 +82,10 @@ STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
         }
     ),
     ROADMAP_STATUS_COMPLETED: frozenset(),
-    ROADMAP_STATUS_IGNORED: frozenset(),
+    # Из IGNORED разрешаем возврат в PENDING — UI «Восстановить» для
+    # проигнорированных рекомендаций. Раньше это был final-state и фронт
+    # получал 400 при попытке вернуть.
+    ROADMAP_STATUS_IGNORED: frozenset({ROADMAP_STATUS_PENDING}),
     ROADMAP_STATUS_DISMISSED: frozenset(),
 }
 

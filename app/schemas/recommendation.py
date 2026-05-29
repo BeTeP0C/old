@@ -3,9 +3,9 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-RECOMMENDATION_TARGET_STATUSES = ("requested", "deferred", "ignored")
+RECOMMENDATION_TARGET_STATUSES = ("requested", "deferred", "ignored", "pending")
 
-RecommendationTargetStatus = Literal["requested", "deferred", "ignored"]
+RecommendationTargetStatus = Literal["requested", "deferred", "ignored", "pending"]
 RecommendationSubjectType = Literal["employee", "team"]
 RecommendationSeverity = Literal["critical", "high", "medium"]
 

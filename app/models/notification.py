@@ -20,6 +20,11 @@ NOTIFICATION_TYPE_ROADMAP_STATUS_CHANGED = "roadmap_status_changed"
 NOTIFICATION_TYPE_RESCHEDULE_PROPOSAL = "reschedule_proposal"
 NOTIFICATION_TYPE_RISK_INCREASED = "risk_level_increased"
 NOTIFICATION_TYPE_SCHEDULE_OUTDATED = "schedule_outdated"
+# Уведомления-«квитанции» по действиям: сотрудник подтвердил/отклонил запрос
+# графика (→ инициатору запроса), и менеджер добавил сотруднику событие (→ сотруднику).
+NOTIFICATION_TYPE_SCHEDULE_CONFIRMED = "schedule_confirmed"
+NOTIFICATION_TYPE_SCHEDULE_DECLINED = "schedule_declined"
+NOTIFICATION_TYPE_EVENT_ASSIGNED = "event_assigned"
 
 NOTIFICATION_SEVERITY_LOW = "low"
 NOTIFICATION_SEVERITY_MEDIUM = "medium"
