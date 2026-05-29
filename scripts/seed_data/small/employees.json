@@ -4,10 +4,50 @@
     "email": "test@example.com",
     "password": "pass1234",
     "full_name": "Тестовый Администратор",
-    "role": "manager",
-    "position": "Руководитель",
+    "role": "admin",
+    "position": "Администратор",
     "timezone": "Europe/Moscow",
     "work_format": "hybrid"
+  },
+  {
+    "id": "00000000-0000-0000-0000-00000000000a",
+    "email": "manager@worktime.dev",
+    "password": "demo1234",
+    "full_name": "Игорь Соколов",
+    "role": "manager",
+    "position": "Руководитель отдела разработки",
+    "timezone": "Europe/Moscow",
+    "work_format": "office"
+  },
+  {
+    "id": "00000000-0000-0000-0000-00000000000b",
+    "email": "hr@worktime.dev",
+    "password": "demo1234",
+    "full_name": "Елена Кадрова",
+    "role": "hr",
+    "position": "HR-специалист",
+    "timezone": "Europe/Moscow",
+    "work_format": "hybrid"
+  },
+  {
+    "id": "00000000-0000-0000-0000-00000000000c",
+    "email": "pm@worktime.dev",
+    "password": "demo1234",
+    "full_name": "Павел Орлов",
+    "role": "pm",
+    "position": "Проектный менеджер",
+    "timezone": "Europe/Moscow",
+    "work_format": "remote"
+  },
+  {
+    "id": "00000000-0000-0000-0000-00000000000d",
+    "email": "employee@worktime.dev",
+    "password": "demo1234",
+    "full_name": "Семён Зайцев",
+    "role": "employee",
+    "position": "Frontend-разработчик",
+    "timezone": "Asia/Yekaterinburg",
+    "work_format": "remote"
   },
   {
     "id": "00000000-0000-0000-0000-000000000002",
