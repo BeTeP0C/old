@@ -168,19 +168,23 @@ def now_utc() -> datetime:
 async def reset_tables(session: AsyncSession) -> None:
     """Чистим все доменные таблицы. alembic_version не трогаем.
 
-    Порядок: notifications → roadmap_items → … → employees.
-    notifications.related_roadmap_item_id FK на roadmap_items,
-    roadmap_items.{employee_id, team_id} FK на employees/teams.
+    CASCADE сам разрулит FK; перечисляем все таблицы явно, чтобы
+    забытая таблица не оставила «висячих» данных между прогонами сида.
     """
     tables = [
         "notifications",
         "roadmap_items",
+        "change_history",
         "import_logs",
         "activity_events",
         "schedule_confirmation_requests",
         "schedule_exceptions",
         "work_schedules",
+        "employee_metric_snapshots",
         "employee_metrics",
+        "refresh_tokens",
+        "ai_chunks",
+        "ai_documents",
         "team_members",
         "teams",
         "employees",
@@ -904,6 +908,7 @@ async def run_seed(
         print("Очищаю таблицы…")
         await reset_tables(session)
 
+    if from_files:
         print(f"Загружаю фикстуры из scripts/seed_data/{profile}/…")
         fixtures = load_fixtures(profile)
 
