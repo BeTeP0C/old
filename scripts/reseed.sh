@@ -13,4 +13,8 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.full.yml}"
 
 cd "$(dirname "$0")/.."
 
+# scripts/seed.py копируется в образ на этапе build, поэтому после git pull
+# контейнер крутит старый код. Пересобираем api перед запуском сида.
+docker compose -f "$COMPOSE_FILE" up -d --build api
+
 docker compose -f "$COMPOSE_FILE" exec api python -m scripts.seed --reset
